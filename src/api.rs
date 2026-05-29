@@ -11,7 +11,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::{
     auth::TokenService,
     rooms::RoomService,
-    error::{AppError, AppResult},
+    error::AppResult,
     webhooks,
 };
 
@@ -53,12 +53,6 @@ pub struct CreateRoomRequest {
 }
 fn default_participants() -> u32 { 50 }
 
-#[derive(Deserialize)]
-pub struct RecordingRequest {
-    pub room_name: String,
-    pub output_file: String,   // e.g. "meeting-2024-01-15.mp4"
-}
-
 // ── Router ────────────────────────────────────────────────────────────────
 
 pub fn router(state: AppState) -> Router {
@@ -68,19 +62,12 @@ pub fn router(state: AppState) -> Router {
         .allow_headers(Any);
 
     Router::new()
-        // Token
         .route("/token",                       post(issue_token))
-        // Rooms
         .route("/rooms",                       get(list_rooms).post(create_room))
         .route("/rooms/:name",                 delete(delete_room))
         .route("/rooms/:name/participants",    get(list_participants))
         .route("/rooms/:name/kick/:identity",  delete(kick_participant))
-        // Recording
-        .route("/recording/start",             post(start_recording))
-        .route("/recording/stop/:egress_id",   post(stop_recording))
-        // Webhooks (LiveKit posts here)
         .route("/webhook",                     post(webhook_handler))
-        // Health
         .route("/health",                      get(health))
         .layer(cors)
         .with_state(state)
@@ -152,53 +139,6 @@ async fn kick_participant(
 ) -> AppResult<StatusCode> {
     s.rooms.kick(&room, &identity).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn start_recording(
-    State(s): State<AppState>,
-    Json(req): Json<RecordingRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    use livekit_api::services::egress::{EgressClient, EgressOutput, RoomCompositeOptions};
-    use livekit_protocol::{EncodedFileOutput, EncodedFileType};
-
-    let egress = EgressClient::new(&s.livekit_url)
-        .map_err(|e| AppError::LiveKit(e.to_string()))?;
-
-    let output_path = format!("/recordings/{}", req.output_file);
-
-    let file_output = EncodedFileOutput {
-        filepath: output_path,
-        file_type: EncodedFileType::Mp4 as i32,
-        ..Default::default()
-    };
-
-    let info = egress
-        .start_room_composite_egress(&req.room_name, vec![EgressOutput::File(file_output)], RoomCompositeOptions::default())
-        .await
-        .map_err(|e| AppError::LiveKit(e.to_string()))?;
-
-    Ok(Json(serde_json::json!({
-        "egress_id": info.egress_id,
-        "status": format!("{:?}", info.status()),
-    })))
-}
-
-async fn stop_recording(
-    State(s): State<AppState>,
-    Path(egress_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    use livekit_api::services::egress::EgressClient;
-
-    let egress = EgressClient::new(&s.livekit_url)
-        .map_err(|e| AppError::LiveKit(e.to_string()))?;
-
-    let info = egress.stop_egress(&egress_id).await
-        .map_err(|e| AppError::LiveKit(e.to_string()))?;
-
-    Ok(Json(serde_json::json!({
-        "egress_id": info.egress_id,
-        "status": format!("{:?}", info.status()),
-    })))
 }
 
 async fn webhook_handler(

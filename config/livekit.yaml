@@ -1,0 +1,22 @@
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false        # false for local Docker Desktop
+
+redis:
+  address: redis:6379           # connects to the redis container
+
+keys:
+  devkey: devsecret             # api_key: api_secret
+
+logging:
+  level: info
+
+# Egress (recording) needs a separate egress service
+# We'll wire that up in docker-compose
+webhook:
+  urls:
+    - http://app:3000/webhook   # your Rust app inside Docker network
+  api_key: devkey

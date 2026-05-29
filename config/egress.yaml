@@ -1,0 +1,14 @@
+api_key: devkey
+api_secret: devsecret
+ws_url: ws://livekit:7880
+
+redis:
+  address: redis:6379
+
+file_output:
+  local:
+    enabled: true
+    output_directory: /recordings
+
+logging:
+  level: info

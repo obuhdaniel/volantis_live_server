@@ -1,5 +1,5 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────
-FROM rust:1.78-slim-bookworm AS builder
+FROM rust:1.90.0-slim-bookworm AS builder
 
 # System deps for livekit-api (needs openssl)
 RUN apt-get update && apt-get install -y \
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/livekit-app /usr/local/bin/livekit-app
+COPY --from=builder /app/target/release/live_server /usr/local/bin/live_server
 
 EXPOSE 3000
-CMD ["livekit-app"]
+CMD ["live_server"]

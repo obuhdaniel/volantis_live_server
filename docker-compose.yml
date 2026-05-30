@@ -9,7 +9,7 @@ services:
   livekit:
     image: livekit/livekit-server
     container_name: lk-server
-    command: ["--dev"]
+    command: ["--dev", "--bind", "0.0.0.0"]
     ports:
       - "7880:7880"
       - "7881:7881"
@@ -26,7 +26,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_URL: http://livekit:7880
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: secret
       BIND_ADDR: "0.0.0.0:3000"

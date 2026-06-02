@@ -1,22 +1,29 @@
 port: 7880
+log_level: info
 
 rtc:
   tcp_port: 7881
   udp_port: 7882
-  use_external_ip: false        # false for local Docker Desktop
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
 
 redis:
-  address: redis:6379           # connects to the redis container
+  address: redis:6379
+
+turn:
+  enabled: true
+  domain: livekit-server.volantislive.com
+  tls_port: 3479
+  udp_port: 3478
 
 keys:
-  devkey: devsecret             # api_key: api_secret
+  devkey: devsecret
 
 logging:
   level: info
 
-# Egress (recording) needs a separate egress service
-# We'll wire that up in docker-compose
 webhook:
   urls:
-    - http://app:3000/webhook   # your Rust app inside Docker network
+    - http://app:3000/webhook
   api_key: devkey

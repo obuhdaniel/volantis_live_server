@@ -1,22 +1,10 @@
 version: "3.9"
 
 networks:
-  livekit-net:
+  app-net:
     driver: bridge
 
 services:
-
-  livekit:
-    image: livekit/livekit-server
-    container_name: lk-server
-    command: ["--dev", "--bind", "0.0.0.0"]
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
-    networks:
-      - livekit-net
-    restart: unless-stopped
 
   app:
     build:
@@ -26,13 +14,11 @@ services:
     ports:
       - "3000:3000"
     environment:
-      LIVEKIT_URL: http://livekit:7880
-      LIVEKIT_API_KEY: devkey
-      LIVEKIT_API_SECRET: secret
+      LIVEKIT_URL: wss://livekit-server.volantislive.com
+      LIVEKIT_API_KEY: APIY7KcSayArEyo
+      LIVEKIT_API_SECRET: zewvscS0R9ieMngmHjf1ZuwHcmJeznzNeiC1wb556msA
       BIND_ADDR: "0.0.0.0:3000"
       RUST_LOG: info
     networks:
-      - livekit-net
-    depends_on:
-      - livekit
+      - app-net
     restart: unless-stopped

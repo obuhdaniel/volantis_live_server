@@ -1,24 +1,22 @@
+use crate::{
+    auth::TokenService, egress::EgressService, error::AppResult, rooms::RoomService, webhooks,
+};
 use axum::{
+    body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{delete, get, post},
     Json, Router,
-    body::Bytes,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use crate::{
-    auth::TokenService,
-    rooms::RoomService,
-    error::AppResult,
-    webhooks,
-};
 
 #[derive(Clone)]
 pub struct AppState {
     pub tokens: Arc<TokenService>,
-    pub rooms:  Arc<RoomService>,
+    pub rooms: Arc<RoomService>,
+    pub egress: Arc<EgressService>,
     pub api_key: String,
     pub api_secret: String,
     pub livekit_url: String,
@@ -37,7 +35,9 @@ pub struct TokenRequest {
     #[serde(default)]
     pub is_admin: bool,
 }
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Serialize)]
 pub struct TokenResponse {
@@ -51,7 +51,33 @@ pub struct CreateRoomRequest {
     #[serde(default = "default_participants")]
     pub max_participants: u32,
 }
-fn default_participants() -> u32 { 50 }
+
+#[derive(Deserialize)]
+pub struct StartRecordingRequest {
+    pub filepath: Option<String>,
+    pub layout: Option<String>,
+    #[serde(default)]
+    pub audio_only: bool,
+}
+
+#[derive(Deserialize)]
+pub struct MuteRequest {
+    pub track_sid: String,
+    #[serde(default = "default_true")]
+    pub muted: bool,
+}
+
+#[derive(Deserialize)]
+pub struct MuteAllRequest {
+    #[serde(default = "default_true")]
+    pub muted: bool,
+    #[serde(default = "default_true")]
+    pub audio_only: bool,
+}
+
+fn default_participants() -> u32 {
+    50
+}
 
 // ── Router ────────────────────────────────────────────────────────────────
 
@@ -62,30 +88,43 @@ pub fn router(state: AppState) -> Router {
         .allow_headers(Any);
 
     Router::new()
-        .route("/token",                       post(issue_token))
-        .route("/rooms",                       get(list_rooms).post(create_room))
-        .route("/rooms/{name}",                 delete(delete_room))
-        .route("/rooms/{name}/participants",    get(list_participants))
-        .route("/rooms/{name}/kick/{identity}",  delete(kick_participant))
-        .route("/webhook",                     post(webhook_handler))
-        .route("/health",                      get(health))
+        .route("/token", post(issue_token))
+        .route("/rooms", get(list_rooms).post(create_room))
+        .route("/rooms/{name}", delete(delete_room))
+        .route("/rooms/{name}/participants", get(list_participants))
+        .route("/rooms/{name}/kick/{identity}", delete(kick_participant))
+        .route("/webhook", post(webhook_handler))
+        .route("/health", get(health))
+        .route("/rooms/{name}/recording/start", post(start_recording))
+        .route("/rooms/{name}/egress", get(get_room_egress))
+        .route("/egress/{id}/stop", post(stop_recording))
+        .route("/rooms/{name}/participants/{identity}/mute", post(mute_one))
+        .route("/rooms/{name}/mute-all", post(mute_all))
         .layer(cors)
         .with_state(state)
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────
 
-async fn health() -> &'static str { "ok" }
+async fn health() -> &'static str {
+    "ok"
+}
 
 async fn issue_token(
     State(s): State<AppState>,
     Json(req): Json<TokenRequest>,
 ) -> AppResult<Json<TokenResponse>> {
     let token = s.tokens.create_join_token(
-        &req.identity, &req.room,
-        req.can_publish, req.can_subscribe, req.is_admin,
+        &req.identity,
+        &req.room,
+        req.can_publish,
+        req.can_subscribe,
+        req.is_admin,
     )?;
-    Ok(Json(TokenResponse { token, url: s.livekit_url.clone() }))
+    Ok(Json(TokenResponse {
+        token,
+        url: s.livekit_url.clone(),
+    }))
 }
 
 async fn create_room(
@@ -102,19 +141,21 @@ async fn create_room(
 
 async fn list_rooms(State(s): State<AppState>) -> AppResult<Json<serde_json::Value>> {
     let rooms: Vec<_> = s.rooms.list().await?;
-    let list: Vec<_> = rooms.iter().map(|r| serde_json::json!({
-        "name": r.name,
-        "sid": r.sid,
-        "num_participants": r.num_participants,
-        "creation_time": r.creation_time,
-    })).collect();
+    let list: Vec<_> = rooms
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name,
+                "sid": r.sid,
+                "num_participants": r.num_participants,
+                "creation_time": r.creation_time,
+            })
+        })
+        .collect();
     Ok(Json(serde_json::json!({ "rooms": list })))
 }
 
-async fn delete_room(
-    State(s): State<AppState>,
-    Path(name): Path<String>,
-) -> AppResult<StatusCode> {
+async fn delete_room(State(s): State<AppState>, Path(name): Path<String>) -> AppResult<StatusCode> {
     s.rooms.delete(&name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -124,12 +165,17 @@ async fn list_participants(
     Path(room): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
     let participants: Vec<_> = s.rooms.participants(&room).await?;
-    let list: Vec<_> = participants.iter().map(|p| serde_json::json!({
-        "identity": p.identity,
-        "sid": p.sid,
-        "name": p.name,
-        "joined_at": p.joined_at,
-    })).collect();
+    let list: Vec<_> = participants
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "identity": p.identity,
+                "sid": p.sid,
+                "name": p.name,
+                "joined_at": p.joined_at,
+            })
+        })
+        .collect();
     Ok(Json(serde_json::json!({ "participants": list })))
 }
 
@@ -141,11 +187,7 @@ async fn kick_participant(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn webhook_handler(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> StatusCode {
+async fn webhook_handler(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
     if let Some(event) = webhooks::verify_and_parse(&s.api_key, &s.api_secret, &headers, &body) {
         tokio::spawn(webhooks::handle_event(event));
         StatusCode::OK
@@ -153,3 +195,111 @@ async fn webhook_handler(
         StatusCode::UNAUTHORIZED
     }
 }
+
+
+async fn start_recording(
+    State(s): State<AppState>,
+    Path(room): Path<String>,
+    Json(req): Json<StartRecordingRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let info = s.egress
+        .start_room_recording(&room, req.filepath, req.layout, req.audio_only)
+        .await?;
+    Ok(Json(serde_json::json!({
+        "egress_id": info.egress_id,
+        "status": info.status,
+        "room_name": info.room_name,
+        "started_at": info.started_at,
+        "ended_at": info.ended_at,
+        "file_results": info.file_results,
+        "error": info.error,
+    })))
+}
+
+async fn stop_recording(
+    State(s): State<AppState>,
+    Path(egress_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let info = s.egress.stop(&egress_id).await?;
+    Ok(Json(serde_json::json!({
+        "egress_id": info.egress_id,
+        "status": info.status,
+        "started_at": info.started_at,
+        "ended_at": info.ended_at,
+        "file_results": info.file_results,
+        "error": info.error,
+    })))
+}
+
+fn egress_status_label(status: i32) -> &'static str {
+    use livekit_protocol::EgressStatus as S;
+    match S::try_from(status) {
+        Ok(S::EgressStarting) => "starting",
+        Ok(S::EgressActive) | Ok(S::EgressEnding) => "in_progress",
+        Ok(S::EgressComplete) => "finished",
+        Ok(S::EgressFailed) => "failed",
+        Ok(S::EgressAborted) => "aborted",
+        Ok(S::EgressLimitReached) => "limit_reached",
+        Err(_) => "unknown",
+    }
+}
+async fn get_room_egress(
+    State(s): State<AppState>,
+    Path(room): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let egresses = s.egress.list_for_room(&room).await?;
+
+    // pick the most relevant egress (active > latest)
+    let maybe = egresses
+        .iter()
+        .find(|e| e.status == livekit_protocol::EgressStatus::EgressActive as i32)
+        .or_else(|| egresses.first());
+
+    if let Some(info) = maybe {
+       
+
+        return Ok(Json(serde_json::json!({
+            "active": info.status == livekit_protocol::EgressStatus::EgressActive as i32,
+            "egress_id": info.egress_id,
+            "status": info.status,
+            "status_label": egress_status_label(info.status),
+            "room_name": info.room_name,
+            "started_at": info.started_at,
+            "ended_at": info.ended_at,
+            "error": info.error,
+            "file_results": info.file_results,
+        })));
+    }
+
+    // fallback (no egress found)
+    Ok(Json(serde_json::json!({
+        "active": false,
+        "egress_id": null,
+        "status": null,
+        "status_label": null,
+        "room_name": room,
+        "started_at": null,
+        "ended_at": null,
+        "error": null,
+        "file_results": [],
+    })))
+}
+
+async fn mute_one(
+    State(s): State<AppState>,
+    Path((room, identity)): Path<(String, String)>,
+    Json(req): Json<MuteRequest>,
+) -> AppResult<StatusCode> {
+    s.rooms.mute_participant(&room, &identity, &req.track_sid, req.muted).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn mute_all(
+    State(s): State<AppState>,
+    Path(room): Path<String>,
+    Json(req): Json<MuteAllRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let count = s.rooms.mute_all(&room, req.muted, req.audio_only).await?;
+    Ok(Json(serde_json::json!({ "muted_tracks": count })))
+}
+

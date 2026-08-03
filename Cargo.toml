@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-livekit-api    = "0.5"
+livekit-api    = { version = "0.5", features = ["rustls-tls-webpki-roots"] }
 livekit-protocol = "0.7" 
 
 

@@ -155,8 +155,8 @@ WantedBy=multi-user.target
 EOF
 # redis config
 cat << EOF > /opt/livekit/redis.conf
-bind 127.0.0.1 ::1
-protected-mode yes
+bind 0.0.0.0 ::1
+protected-mode no
 port 6379
 timeout 0
 tcp-keepalive 300

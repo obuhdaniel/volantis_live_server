@@ -1,5 +1,5 @@
 use livekit_api::services::room::{CreateRoomOptions, RoomClient};
-use livekit_protocol::{Room, ParticipantInfo, TrackInfo};
+use livekit_protocol::{ParticipantInfo, Room, TrackInfo, TrackType};
 use crate::error::{AppError, AppResult};
 
 pub struct RoomService {
@@ -56,4 +56,21 @@ impl RoomService {
             .map_err(|e| AppError::LiveKit(e.to_string()))?;
         Ok(())
   }
+
+   /// Mutes (or unmutes) every published track in a room. Set `audio_only`
+    /// to false to also affect video tracks.
+    pub async fn mute_all(&self, room: &str, muted: bool, audio_only: bool) -> AppResult<usize> {
+        let participants = self.participants(room).await?;
+        let mut count = 0;
+        for p in participants {
+            for track in &p.tracks {
+                if audio_only && track.r#type != TrackType::Audio as i32 {
+                    continue;
+                }
+                self.mute_participant(room, &p.identity, &track.sid, muted).await?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
 }

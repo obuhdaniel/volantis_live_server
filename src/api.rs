@@ -131,7 +131,7 @@ async fn create_room(
     State(s): State<AppState>,
     Json(req): Json<CreateRoomRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let room = s.rooms.create(&req.name, req.max_participants).await?;
+    let room = s.rooms.create(&req.name).await?;
     Ok(Json(serde_json::json!({
         "name": room.name,
         "sid": room.sid,

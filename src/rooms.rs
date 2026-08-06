@@ -13,9 +13,11 @@ impl RoomService {
         Ok(Self { client })
     }
 
-    pub async fn create(&self, name: &str, max_participants: u32) -> AppResult<Room> {
+    const UNLIMITED_PARTICIPANTS: u32 = 0;
+
+    pub async fn create(&self, name: &str) -> AppResult<Room> {
         let opts = CreateRoomOptions {
-            max_participants,
+            max_participants: Self::UNLIMITED_PARTICIPANTS,
             empty_timeout: 600,
             ..Default::default()
         };

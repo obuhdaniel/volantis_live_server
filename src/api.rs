@@ -1,5 +1,6 @@
 use crate::{
-    auth::TokenService, egress::EgressService, error::AppResult, rooms::RoomService, webhooks,
+    agents::AgentService, auth::TokenService, egress::EgressService, error::AppResult,
+    rooms::RoomService, webhooks,
 };
 use axum::{
     body::Bytes,
@@ -17,6 +18,8 @@ pub struct AppState {
     pub tokens: Arc<TokenService>,
     pub rooms: Arc<RoomService>,
     pub egress: Arc<EgressService>,
+    pub agents: Arc<AgentService>,
+    pub agent_name: String,
     pub api_key: String,
     pub api_secret: String,
     pub livekit_url: String,
@@ -75,6 +78,13 @@ pub struct MuteAllRequest {
     pub audio_only: bool,
 }
 
+#[derive(Deserialize)]
+pub struct DispatchAgentRequest {
+    pub agent_name: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<String>,
+}
+
 fn default_participants() -> u32 {
     50
 }
@@ -100,6 +110,14 @@ pub fn router(state: AppState) -> Router {
         .route("/egress/{id}/stop", post(stop_recording))
         .route("/rooms/{name}/participants/{identity}/mute", post(mute_one))
         .route("/rooms/{name}/mute-all", post(mute_all))
+        .route(
+            "/rooms/{name}/agent-dispatch",
+            get(list_agent_dispatches).post(create_agent_dispatch),
+        )
+        .route(
+            "/rooms/{name}/agent-dispatch/{dispatch_id}",
+            delete(delete_agent_dispatch),
+        )
         .layer(cors)
         .with_state(state)
 }
@@ -301,5 +319,47 @@ async fn mute_all(
 ) -> AppResult<Json<serde_json::Value>> {
     let count = s.rooms.mute_all(&room, req.muted, req.audio_only).await?;
     Ok(Json(serde_json::json!({ "muted_tracks": count })))
+}
+
+async fn create_agent_dispatch(
+    State(s): State<AppState>,
+    Path(room): Path<String>,
+    Json(req): Json<DispatchAgentRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let agent_name = req.agent_name.unwrap_or_else(|| s.agent_name.clone());
+    let dispatch = s.agents.dispatch(&room, &agent_name, req.metadata).await?;
+    Ok(Json(serde_json::json!({
+        "id": dispatch.id,
+        "agent_name": dispatch.agent_name,
+        "room": dispatch.room,
+        "metadata": dispatch.metadata,
+    })))
+}
+
+async fn list_agent_dispatches(
+    State(s): State<AppState>,
+    Path(room): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let dispatches: Vec<_> = s.agents.list(&room).await?;
+    let list: Vec<_> = dispatches
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": d.id,
+                "agent_name": d.agent_name,
+                "room": d.room,
+                "metadata": d.metadata,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "agent_dispatches": list })))
+}
+
+async fn delete_agent_dispatch(
+    State(s): State<AppState>,
+    Path((room, dispatch_id)): Path<(String, String)>,
+) -> AppResult<StatusCode> {
+    s.agents.delete(&dispatch_id, &room).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
